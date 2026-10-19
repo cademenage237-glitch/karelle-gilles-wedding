@@ -120,6 +120,10 @@ export default function Rsvp() {
   async function handleSubmitGeneric(e) {
     e.preventDefault();
     if (!fullName.trim() || !supabaseConfigured || !responseKey) return;
+    if (status === 'pending') {
+      setError('Merci de choisir si vous serez présent ou non.');
+      return;
+    }
     setError(null);
 
     const { data: inserted, error: err } = await supabase
@@ -203,7 +207,7 @@ export default function Rsvp() {
               <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={3} className="w-full border border-civil-plum/30 bg-transparent px-4 py-2 focus:outline-none focus:border-fuschia" />
             </div>
 
-            <button type="submit" className="w-full bg-fuschia text-ivory py-3 uppercase tracking-[0.2em] text-sm hover:bg-fuschia-light transition-colors">Envoyer ma réponse</button>
+            <button type="submit" disabled={status === 'pending'} className="w-full bg-fuschia text-ivory py-3 uppercase tracking-[0.2em] text-sm hover:bg-fuschia-light transition-colors disabled:opacity-40">Envoyer ma réponse</button>
           </form>
         )}
 

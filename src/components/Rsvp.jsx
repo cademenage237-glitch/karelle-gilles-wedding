@@ -3,6 +3,18 @@ import { supabase, supabaseConfigured } from '../lib/supabase';
 import { generateConfirmationCode, slugify } from '../lib/utils';
 import InviteCard from './InviteCard';
 
+function getGenericResponseKey() {
+  const storageKey = 'cg_general_rsvp_response_key';
+  let key = localStorage.getItem(storageKey);
+  if (!key) {
+    key = typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `general-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem(storageKey, key);
+  }
+  return key;
+}
+
 export default function Rsvp() {
   const [slug, setSlug] = useState(null);
   const [guest, setGuest] = useState(null);
@@ -14,6 +26,7 @@ export default function Rsvp() {
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState(null);
   const [confirmedGuest, setConfirmedGuest] = useState(null);
+  const [responseKey, setResponseKey] = useState(null);
 
   const isPersonalized = Boolean(guest);
 
@@ -23,6 +36,22 @@ export default function Rsvp() {
     setSlug(invite);
 
     if (!invite || !supabaseConfigured) {
+      if (!invite && supabaseConfigured) {
+        const key = getGenericResponseKey();
+        setResponseKey(key);
+        supabase.from('rsvp_responses').select('*').eq('response_key', key).maybeSingle()
+          .then(({ data }) => {
+            if (data) {
+              setFullName(data.full_name);
+              setStatus(data.attending ? 'confirmed' : 'declined');
+              setPartySize(data.party_size || 1);
+              setMessage(data.message || '');
+              setSubmitted(true);
+            }
+            setLoading(false);
+          });
+        return;
+      }
       setLoading(false);
       return;
     }
@@ -57,17 +86,31 @@ export default function Rsvp() {
     e.preventDefault();
     if (!guest || !supabaseConfigured) return;
     setError(null);
-    const { error: err } = await supabase
+    const { data, error: err } = await supabase
       .from('guests')
       .update({
         rsvp_status: status,
-        rsvp_party_size: status === 'confirmed' ? partySize : 0,
+        rsvp_party_size: status === 'confirmed' ? Math.min(partySize, guest.party_size) : 0,
         rsvp_message: message,
       })
-      .eq('slug', guest.slug);
+      .eq('slug', guest.slug)
+      .eq('rsvp_status', 'pending')
+      .select('id')
+      .maybeSingle();
 
     if (err) {
       setError("Une erreur est survenue, merci de réessayer.");
+    } else if (!data) {
+      const { data: current } = await supabase.from('guests').select('*').eq('slug', guest.slug).maybeSingle();
+      if (current && current.rsvp_status !== 'pending') {
+        setStatus(current.rsvp_status);
+        if (current.rsvp_status === 'confirmed') {
+          setConfirmedGuest({ full_name: current.full_name, confirmation_code: current.confirmation_code });
+        }
+        setSubmitted(true);
+      } else {
+        setError("Cette invitation a déjà été utilisée ou n'est plus disponible.");
+      }
     } else {
       setConfirmedGuest({ full_name: guest.full_name, confirmation_code: guest.confirmation_code });
       setSubmitted(true);
@@ -76,31 +119,36 @@ export default function Rsvp() {
 
   async function handleSubmitGeneric(e) {
     e.preventDefault();
-    if (!fullName.trim() || !supabaseConfigured) return;
+    if (!fullName.trim() || !supabaseConfigured || !responseKey) return;
     setError(null);
 
-    const code = generateConfirmationCode();
-    const baseSlug = slugify(fullName) || 'invite';
-    const newSlug = `${baseSlug}-${Math.floor(1000 + Math.random() * 9000)}`;
-
-    const { data, error: err } = await supabase
-      .from('guests')
+    const { data: inserted, error: err } = await supabase
+      .from('rsvp_responses')
       .insert({
+        response_type: 'general',
         full_name: fullName.trim(),
-        slug: newSlug,
-        confirmation_code: code,
-        party_size: status === 'confirmed' ? partySize : 1,
-        rsvp_status: status,
-        rsvp_party_size: status === 'confirmed' ? partySize : 0,
-        rsvp_message: message,
+        attending: status === 'confirmed',
+        party_size: status === 'confirmed' ? Math.max(1, Number(partySize) || 1) : 0,
+        message: message.trim() || null,
+        response_key: responseKey,
       })
       .select()
       .single();
 
     if (err) {
+      if (err.code === '23505') {
+        const { data: existing } = await supabase.from('rsvp_responses').select('*').eq('response_key', responseKey).maybeSingle();
+        if (existing) {
+          setFullName(existing.full_name);
+          setStatus(existing.attending ? 'confirmed' : 'declined');
+          setPartySize(existing.party_size || 1);
+          setMessage(existing.message || '');
+          setSubmitted(true);
+          return;
+        }
+      }
       setError("Une erreur est survenue, merci de réessayer.");
-    } else {
-      setConfirmedGuest({ full_name: data.full_name, confirmation_code: data.confirmation_code });
+    } else if (inserted) {
       setSubmitted(true);
     }
   }

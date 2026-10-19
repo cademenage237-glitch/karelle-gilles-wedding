@@ -1,87 +1,121 @@
 import { useEffect, useState } from 'react';
 import { supabase, supabaseConfigured } from '../lib/supabase';
-import { generateConfirmationCode, slugify } from '../lib/utils';
+
+function getTraditionalResponseKey() {
+  const storageKey = 'cg_traditional_rsvp_response_key';
+  let key = localStorage.getItem(storageKey);
+  if (!key) {
+    key = typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `traditional-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem(storageKey, key);
+  }
+  return key;
+}
 
 export default function TraditionalRsvp() {
   const [guest, setGuest] = useState(null);
   const [loading, setLoading] = useState(true);
   const [fullName, setFullName] = useState('');
-  const [attending, setAttending] = useState(null); // true | false | null
+  const [attending, setAttending] = useState(null);
   const [partySize, setPartySize] = useState(1);
+  const [responseKey, setResponseKey] = useState(null);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState(null);
 
   const isPersonalized = Boolean(guest);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const invite = params.get('invite');
-    if (!invite || !supabaseConfigured) {
-      setLoading(false);
-      return;
-    }
-    supabase
-      .from('guests')
-      .select('*')
-      .eq('slug', invite)
-      .single()
-      .then(({ data }) => {
-        if (data) {
-          setGuest(data);
-          if (data.traditional_attending !== null) {
-            setAttending(data.traditional_attending);
-            setPartySize(data.traditional_party_size || 1);
-          } else {
-            setPartySize(data.party_size || 1);
-          }
-        }
+    async function loadResponse() {
+      if (!supabaseConfigured) {
         setLoading(false);
-      });
+        return;
+      }
+
+      const invite = new URLSearchParams(window.location.search).get('invite');
+      let key;
+
+      if (invite) {
+        const { data, error: guestError } = await supabase
+          .from('guests')
+          .select('id, full_name, slug, party_size')
+          .eq('slug', invite)
+          .maybeSingle();
+
+        if (guestError || !data) {
+          setError('Invitation introuvable. Vérifiez le lien reçu.');
+          setLoading(false);
+          return;
+        }
+        setGuest(data);
+        setFullName(data.full_name);
+        setPartySize(data.party_size || 1);
+        key = `traditional:${data.slug}`;
+      } else {
+        key = getTraditionalResponseKey();
+      }
+
+      setResponseKey(key);
+      const { data: existing, error: responseError } = await supabase
+        .from('rsvp_responses')
+        .select('*')
+        .eq('response_key', key)
+        .maybeSingle();
+
+      if (responseError) {
+        setError('Le formulaire est momentanément indisponible. Merci de réessayer plus tard.');
+      } else if (existing) {
+        setFullName(existing.full_name);
+        setAttending(existing.attending);
+        setPartySize(existing.party_size || 1);
+        setSubmitted(true);
+      }
+      setLoading(false);
+    }
+
+    loadResponse();
   }, []);
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (attending === null || !supabaseConfigured) return;
-    setError(null);
+    if (attending === null || !supabaseConfigured || !responseKey) return;
+    if (!isPersonalized && !fullName.trim()) {
+      setError('Merci de renseigner votre nom.');
+      return;
+    }
 
-    if (isPersonalized) {
-      const { error: err } = await supabase
-        .from('guests')
-        .update({
-          traditional_attending: attending,
-          traditional_party_size: attending ? partySize : 0,
-          traditional_responded_at: new Date().toISOString(),
-        })
-        .eq('slug', guest.slug);
-      if (err) {
-        setError('Une erreur est survenue, merci de réessayer.');
-        return;
+    setError(null);
+    const { error: insertError } = await supabase.from('rsvp_responses').insert({
+      response_type: 'traditional',
+      full_name: (guest?.full_name || fullName).trim(),
+      attending,
+      party_size: attending ? Math.max(1, Number(partySize) || 1) : 0,
+      response_key: responseKey,
+      invite_slug: guest?.slug || null,
+    });
+
+    if (insertError) {
+      if (insertError.code === '23505') {
+        const { data: existing } = await supabase
+          .from('rsvp_responses')
+          .select('*')
+          .eq('response_key', responseKey)
+          .maybeSingle();
+        if (existing) {
+          setAttending(existing.attending);
+          setPartySize(existing.party_size || 1);
+          setSubmitted(true);
+          return;
+        }
       }
-    } else {
-      if (!fullName.trim()) {
-        setError('Merci de renseigner votre nom.');
-        return;
-      }
-      const baseSlug = slugify(fullName) || 'invite';
-      const newSlug = `${baseSlug}-${Math.floor(1000 + Math.random() * 9000)}`;
-      const { error: err } = await supabase.from('guests').insert({
-        full_name: fullName.trim(),
-        slug: newSlug,
-        confirmation_code: generateConfirmationCode(),
-        party_size: attending ? partySize : 1,
-        traditional_attending: attending,
-        traditional_party_size: attending ? partySize : 0,
-        traditional_responded_at: new Date().toISOString(),
-      });
-      if (err) {
-        setError('Une erreur est survenue, merci de réessayer.');
-        return;
-      }
+      setError('Une erreur est survenue, merci de réessayer.');
+      return;
     }
     setSubmitted(true);
   }
 
-  if (!supabaseConfigured || loading) return null;
+  if (loading) return <p className="text-center opacity-60">Chargement du formulaire…</p>;
+  if (!supabaseConfigured) return null;
 
   return (
     <div className="max-w-md mx-auto mt-10 bg-white/50 border border-fuschia/15 rounded-sm p-6 text-left">
@@ -92,7 +126,7 @@ export default function TraditionalRsvp() {
       ) : (
         <form onSubmit={handleSubmit}>
           <p className="text-center uppercase tracking-[0.2em] text-xs text-fuschia mb-4">
-            Serez-vous présent&middot;e ?
+            Serez-vous présent·e ?
           </p>
 
           {!isPersonalized && (
@@ -101,16 +135,17 @@ export default function TraditionalRsvp() {
               onChange={(e) => setFullName(e.target.value)}
               placeholder="Votre nom complet"
               className="w-full border border-dawn-plum/20 bg-white px-3 py-2 text-sm mb-4 focus:outline-none focus:border-fuschia"
+              required
             />
           )}
 
           <div className="flex gap-4 justify-center mb-4">
             <label className="flex items-center gap-2 cursor-pointer text-sm">
-              <input type="checkbox" checked={attending === true} onChange={() => setAttending(true)} className="accent-fuschia w-4 h-4" />
+              <input type="radio" name="traditional-attending" checked={attending === true} onChange={() => setAttending(true)} className="accent-fuschia w-4 h-4" />
               Oui
             </label>
             <label className="flex items-center gap-2 cursor-pointer text-sm">
-              <input type="checkbox" checked={attending === false} onChange={() => setAttending(false)} className="accent-fuschia w-4 h-4" />
+              <input type="radio" name="traditional-attending" checked={attending === false} onChange={() => setAttending(false)} className="accent-fuschia w-4 h-4" />
               Non
             </label>
           </div>
@@ -121,9 +156,11 @@ export default function TraditionalRsvp() {
               <input
                 type="number"
                 min={1}
+                max={guest?.party_size || undefined}
                 value={partySize}
                 onChange={(e) => setPartySize(Number(e.target.value))}
                 className="w-full border border-dawn-plum/20 bg-white px-3 py-2 text-sm text-center focus:outline-none focus:border-fuschia"
+                required
               />
             </div>
           )}

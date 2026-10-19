@@ -1,8 +1,8 @@
-export default function TraditionalTab({ guests }) {
-  const responded = guests.filter((g) => g.traditional_attending !== null && g.traditional_attending !== undefined);
-  const attending = responded.filter((g) => g.traditional_attending === true);
-  const notAttending = responded.filter((g) => g.traditional_attending === false);
-  const totalPeople = attending.reduce((sum, g) => sum + (g.traditional_party_size || 0), 0);
+export default function TraditionalTab({ responses = [] }) {
+  const traditional = responses.filter((r) => r.response_type === 'traditional');
+  const attending = traditional.filter((r) => r.attending === true);
+  const notAttending = traditional.filter((r) => r.attending === false);
+  const totalPeople = attending.reduce((sum, r) => sum + (r.party_size || 0), 0);
 
   return (
     <div>
@@ -13,11 +13,11 @@ export default function TraditionalTab({ guests }) {
         </div>
         <div className="border border-fuschia/10 p-4 text-center bg-white/60">
           <p className="font-display text-3xl">{attending.length}</p>
-          <p className="text-xs uppercase tracking-wide opacity-60 mt-1">Invitations "Oui"</p>
+          <p className="text-xs uppercase tracking-wide opacity-60 mt-1">Réponses « Oui »</p>
         </div>
         <div className="border border-fuschia/10 p-4 text-center bg-white/60">
           <p className="font-display text-3xl">{notAttending.length}</p>
-          <p className="text-xs uppercase tracking-wide opacity-60 mt-1">Invitations "Non"</p>
+          <p className="text-xs uppercase tracking-wide opacity-60 mt-1">Réponses « Non »</p>
         </div>
       </div>
 
@@ -28,17 +28,19 @@ export default function TraditionalTab({ guests }) {
             <tr>
               <th className="px-4 py-3">Nom</th>
               <th className="px-4 py-3">Nombre de personnes</th>
+              <th className="px-4 py-3">Date de réponse</th>
             </tr>
           </thead>
           <tbody>
-            {attending.map((g) => (
-              <tr key={g.id} className="border-t border-fuschia/10">
-                <td className="px-4 py-3 font-medium">{g.full_name}</td>
-                <td className="px-4 py-3">{g.traditional_party_size}</td>
+            {attending.map((r) => (
+              <tr key={r.id} className="border-t border-fuschia/10">
+                <td className="px-4 py-3 font-medium">{r.full_name}</td>
+                <td className="px-4 py-3">{r.party_size}</td>
+                <td className="px-4 py-3">{r.created_at ? new Date(r.created_at).toLocaleDateString('fr-FR') : '—'}</td>
               </tr>
             ))}
             {attending.length === 0 && (
-              <tr><td colSpan={2} className="px-4 py-8 text-center opacity-50">Aucune réponse "Oui" pour le moment.</td></tr>
+              <tr><td colSpan={3} className="px-4 py-8 text-center opacity-50">Aucune réponse « Oui » pour le moment.</td></tr>
             )}
           </tbody>
         </table>
@@ -46,13 +48,14 @@ export default function TraditionalTab({ guests }) {
 
       {notAttending.length > 0 && (
         <>
-          <h3 className="font-display italic text-xl text-dawn-plum/60 mb-4">Ont répondu "Non"</h3>
+          <h3 className="font-display italic text-xl text-dawn-plum/60 mb-4">Ont répondu « Non »</h3>
           <div className="overflow-x-auto border border-fuschia/10 rounded-sm">
             <table className="w-full text-sm text-left">
               <tbody>
-                {notAttending.map((g) => (
-                  <tr key={g.id} className="border-t border-fuschia/10">
-                    <td className="px-4 py-3 opacity-70">{g.full_name}</td>
+                {notAttending.map((r) => (
+                  <tr key={r.id} className="border-t border-fuschia/10">
+                    <td className="px-4 py-3 opacity-70">{r.full_name}</td>
+                    <td className="px-4 py-3 opacity-50">{r.created_at ? new Date(r.created_at).toLocaleDateString('fr-FR') : '—'}</td>
                   </tr>
                 ))}
               </tbody>

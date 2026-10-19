@@ -9,6 +9,7 @@ import MessagesTab from '../components/admin/MessagesTab';
 
 export default function Admin() {
   const [guests, setGuests] = useState([]);
+  const [responses, setResponses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
   const [search, setSearch] = useState('');
@@ -21,8 +22,12 @@ export default function Admin() {
       setLoading(false);
       return;
     }
-    const { data } = await supabase.from('guests').select('*').order('created_at', { ascending: true });
-    setGuests(data || []);
+    const [{ data: guestData }, { data: responseData }] = await Promise.all([
+      supabase.from('guests').select('*').order('created_at', { ascending: true }),
+      supabase.from('rsvp_responses').select('*').order('created_at', { ascending: true }),
+    ]);
+    setGuests(guestData || []);
+    setResponses(responseData || []);
     setLoading(false);
   }
 
@@ -228,9 +233,9 @@ export default function Admin() {
             </div>
           </>
         ) : tab === 'traditionnel' ? (
-          <TraditionalTab guests={guests} />
+          <TraditionalTab responses={responses} />
         ) : (
-          <MessagesTab guests={guests} />
+          <MessagesTab guests={guests} responses={responses} />
         )}
 
         {toast && (
